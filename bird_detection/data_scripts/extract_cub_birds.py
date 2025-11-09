@@ -5,7 +5,7 @@ import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PIL import Image
 
@@ -42,7 +42,9 @@ def sanitize_class_name(name: str) -> str:
 
 def match_class_tokens(classes: Dict[int, str], tokens: Iterable[str]) -> Set[int]:
     normalized = {cid: name.lower() for cid, name in classes.items()}
-    sanitized = {cid: sanitize_class_name(name).lower() for cid, name in classes.items()}
+    sanitized = {
+        cid: sanitize_class_name(name).lower() for cid, name in classes.items()
+    }
 
     matched: Set[int] = set()
     for token in tokens:
@@ -53,15 +55,11 @@ def match_class_tokens(classes: Dict[int, str], tokens: Iterable[str]) -> Set[in
             matched.add(int(key))
             continue
         matches = [
-            cid
-            for cid, name in normalized.items()
-            if key == name or key in name
+            cid for cid, name in normalized.items() if key == name or key in name
         ]
         if not matches:
             matches = [
-                cid
-                for cid, value in sanitized.items()
-                if key == value or key in value
+                cid for cid, value in sanitized.items() if key == value or key in value
             ]
         matched.update(matches)
     return matched
@@ -75,9 +73,25 @@ def clip(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
 
-def cub_bbox_to_pixel(
+def maybe_resize(
+    image: Image.Image, max_dim: Optional[int]
+) -> Tuple[Image.Image, bool]:
+    if not max_dim:
+        return image, False
+    longer_side = max(image.size)
+    if longer_side <= max_dim:
+        return image, False
+    scale = max_dim / float(longer_side)
+    new_size = (
+        max(1, int(round(image.width * scale))),
+        max(1, int(round(image.height * scale))),
+    )
+    return image.resize(new_size, Image.LANCZOS), True
+
+
+def cub_bbox_to_normalized(
     x: float, y: float, width: float, height: float, image_width: int, image_height: int
-) -> List[int]:
+) -> List[float]:
     x1 = x - 1.0
     y1 = y - 1.0
     x2 = x1 + width
@@ -91,14 +105,12 @@ def cub_bbox_to_pixel(
     if x2 <= x1 or y2 <= y1:
         raise ValueError("Degenerate bounding box after clipping.")
 
-    x_min = int(math.floor(x1))
-    y_min = int(math.floor(y1))
-    x_max = int(math.ceil(x2))
-    y_max = int(math.ceil(y2))
-
-    width_px = max(1, x_max - x_min)
-    height_px = max(1, y_max - y_min)
-    return [x_min, y_min, width_px, height_px]
+    return [
+        x1 / image_width,
+        y1 / image_height,
+        (x2 - x1) / image_width,
+        (y2 - y1) / image_height,
+    ]
 
 
 def export_cub_dataset(
@@ -106,6 +118,7 @@ def export_cub_dataset(
     dest_root: Path,
     include_tokens: Iterable[str],
     clear_dest: bool,
+    max_dim: Optional[int],
 ) -> None:
     metadata_dir = data_root
     image_dir = data_root / "images"
@@ -140,10 +153,6 @@ def export_cub_dataset(
         if class_id not in class_id_to_index:
             continue
 
-        bbox_values = boxes.get(image_id)
-        if not bbox_values:
-            continue
-
         class_index = class_id_to_index[class_id]
         class_name = classes[class_id]
         class_dir = dest_root / f"{class_index:03d}_{sanitize_class_name(class_name)}"
@@ -156,23 +165,43 @@ def export_cub_dataset(
         if not source_image_path.exists():
             raise FileNotFoundError(f"Missing image file: {source_image_path}")
 
-        with Image.open(source_image_path) as img:
-            width, height = img.size
-
-        try:
-            x_min, y_min, width_px, height_px = cub_bbox_to_pixel(
-                *bbox_values, width, height
-            )
-        except ValueError:
+        bbox_values = boxes.get(image_id)
+        if not bbox_values:
             continue
 
+        with Image.open(source_image_path) as img:
+            orig_width, orig_height = img.size
+            try:
+                x_norm, y_norm, w_norm, h_norm = cub_bbox_to_normalized(
+                    *bbox_values, orig_width, orig_height
+                )
+            except ValueError:
+                continue
+
+            processed_img, _ = maybe_resize(img, max_dim)
+            processed_img = processed_img.copy()
+            width, height = processed_img.size
+
+            x_min = x_norm * width
+            y_min = y_norm * height
+            width_px = w_norm * width
+            height_px = h_norm * height
+
+        x_min_int = int(math.floor(x_min))
+        y_min_int = int(math.floor(y_min))
+        x_max_int = int(math.ceil(x_min + width_px))
+        y_max_int = int(math.ceil(y_min + height_px))
+
+        width_px_int = max(1, x_max_int - x_min_int)
+        height_px_int = max(1, y_max_int - y_min_int)
+
         dest_image_path = image_dest_dir / source_image_path.name
-        shutil.copy2(source_image_path, dest_image_path)
+        processed_img.save(dest_image_path)
 
         pixel_label_path = label_pixel_dir / f"{source_image_path.stem}.txt"
         with pixel_label_path.open("w", encoding="utf-8") as pixel_label_file:
             pixel_label_file.write(
-                f"{class_index} {x_min} {y_min} {width_px} {height_px}\n"
+                f"{class_index} {x_min_int} {y_min_int} {width_px_int} {height_px_int}\n"
             )
 
         class_counts[class_id] += 1
@@ -222,6 +251,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Remove destination directory before exporting.",
     )
+    parser.add_argument(
+        "--max-dim",
+        type=int,
+        default=500,
+        help="If > 0, downscale images so the longer side <= max_dim before saving.",
+    )
     return parser.parse_args()
 
 
@@ -232,6 +267,7 @@ def main() -> None:
         dest_root=args.dest_root,
         include_tokens=args.include,
         clear_dest=args.clear_dest,
+        max_dim=args.max_dim if args.max_dim and args.max_dim > 0 else None,
     )
 
 

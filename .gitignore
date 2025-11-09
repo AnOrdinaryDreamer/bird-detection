@@ -1,0 +1,6 @@
+.venv/
+.poetry_cache/
+.poetry_venvs/
+.virtualenv_app_data/
+__pycache__/
+*.py[cod]

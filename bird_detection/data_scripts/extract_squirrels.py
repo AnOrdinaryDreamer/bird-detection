@@ -2,12 +2,30 @@ import argparse
 import math
 import shutil
 from pathlib import Path
+from typing import Optional, Tuple
 
 from PIL import Image
 
 
 def clip(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def conditional_resize(
+    image: Image.Image, max_dim: Optional[int]
+) -> Tuple[Image.Image, bool]:
+    """Downscale image if its longer side exceeds max_dim."""
+    if max_dim is None:
+        return image, False
+    longer_side = max(image.size)
+    if longer_side <= max_dim:
+        return image, False
+    scale = max_dim / float(longer_side)
+    new_size = (
+        max(1, int(round(image.width * scale))),
+        max(1, int(round(image.height * scale))),
+    )
+    return image.resize(new_size, Image.LANCZOS), True
 
 
 def find_image(image_dir: Path, stem: str) -> Path:
@@ -18,7 +36,9 @@ def find_image(image_dir: Path, stem: str) -> Path:
 
     matches = list(image_dir.glob(f"{stem}.*"))
     if not matches:
-        raise FileNotFoundError(f"Could not locate image for label '{stem}' in {image_dir}")
+        raise FileNotFoundError(
+            f"Could not locate image for label '{stem}' in {image_dir}"
+        )
     return matches[0]
 
 
@@ -27,11 +47,14 @@ def extract_from_source(
     dest_image_dir: Path,
     dest_pixel_label_dir: Path,
     class_id: str,
+    max_dim: Optional[int],
 ) -> int:
     label_dir = source_dir / "labels"
     image_dir = source_dir / "images"
     if not label_dir.exists() or not image_dir.exists():
-        raise FileNotFoundError(f"Expected YOLO directory structure (images/labels) under {source_dir}")
+        raise FileNotFoundError(
+            f"Expected YOLO directory structure (images/labels) under {source_dir}"
+        )
 
     kept = 0
     for label_file in label_dir.glob("*.txt"):
@@ -44,9 +67,14 @@ def extract_from_source(
 
         image_path = find_image(image_dir, label_file.stem)
         with Image.open(image_path) as image:
-            width, height = image.size
+            processed_image, resized = conditional_resize(image, max_dim)
+            width, height = processed_image.size
 
-        shutil.copy2(image_path, dest_image_dir / image_path.name)
+            dest_image_path = dest_image_dir / image_path.name
+            if resized:
+                processed_image.save(dest_image_path)
+            else:
+                shutil.copy2(image_path, dest_image_path)
 
         pixel_lines = []
         for line in selected:
@@ -71,7 +99,9 @@ def extract_from_source(
             height_px = max(1, y_max - y_min)
             pixel_lines.append(f"{parts[0]} {x_min} {y_min} {width_px} {height_px}")
 
-        with (dest_pixel_label_dir / label_file.name).open("w", encoding="utf-8") as pixel_out:
+        with (dest_pixel_label_dir / label_file.name).open(
+            "w", encoding="utf-8"
+        ) as pixel_out:
             pixel_out.write("\n".join(pixel_lines) + "\n")
 
         kept += 1
@@ -112,13 +142,19 @@ def main() -> None:
         action="store_true",
         help="Clear destination directory before extraction.",
     )
+    parser.add_argument(
+        "--max-dim",
+        type=int,
+        default=500,
+        help="If > 0, downscale images so the longer side <= max_dim before saving.",
+    )
     args = parser.parse_args()
 
     if args.clear_dest and args.dest_root.exists():
         shutil.rmtree(args.dest_root)
 
     dest_image_dir = args.dest_root / "images"
-    dest_pixel_label_dir = args.dest_root / "labels"
+    dest_pixel_label_dir = args.dest_root / "labels_pixel"
     dest_image_dir.mkdir(parents=True, exist_ok=True)
     dest_pixel_label_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,6 +166,7 @@ def main() -> None:
             dest_image_dir,
             dest_pixel_label_dir,
             args.class_id,
+            args.max_dim if args.max_dim and args.max_dim > 0 else None,
         )
         print(f"{source}: kept {kept} label files for class {args.class_id}")
         total += kept

@@ -1,0 +1,9 @@
+defaults:
+  - data: dataset
+  - model: fasterrcnn
+  - training: default
+  - logging: default
+  - augmentations: default
+  - _self_
+
+seed: 42

@@ -23,3 +23,18 @@ scores (Tensor[N]): the scores of each detection
 
 
 * Check right bb denormalization, that нет превышений размера картинки (можно визуально оценить смещение)
+
+## Training CLI reminders
+
+* Запуск с Hydra: `python -m bird_detection.detection.train training.epochs=1 model=ssd augmentations.train.advanced.mosaic.enabled=true`.
+* TensorBoard логи живут в `${hydra:run.dir}/tensorboard`, output-модель — `${hydra:run.dir}/trained_model`.
+
+## Testing reminders
+
+* Pytests для всего проекта: `pytest`. Полезные подсuites:
+  * `pytest tests/test_augmentations.py` — проверяет `DetectionTransformPipeline` (0-1 тензоры, нормализация, ресайз, интеграция с Albumentations, поведение при удалении боксов).
+  * `pytest tests/test_data_scripts.py` — валидирует экспорт белок и CUB: структура файлов, форматы `labels_pixel`, ресайз, обрезка, CSV с отображением классов.
+  * `pytest tests/test_dataloaders.py` — sanity-check датасет/колайт и `DatasetMetadata` (ограничение диапазонов, область боксов, уникальные ID птиц/белок).
+  * `pytest tests/test_predictions.py` — форматирование выводов модели в API (`bbox`, фильтрация по порогу, fallback `not_found`).
+* Визуальная проверка денормализации: `python -m bird_detection.data_scripts.visualize_bboxes --images-dir bird_detection/data/selected/birds/<class_dir>/images --labels-dir bird_detection/data/selected/birds/<class_dir>/labels_pixel --output-dir outputs/bbox_viz/<class_dir> --limit 5 --shuffle`.
+

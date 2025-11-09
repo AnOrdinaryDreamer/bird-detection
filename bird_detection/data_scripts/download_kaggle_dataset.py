@@ -10,7 +10,9 @@ from typing import Optional, Iterable
 import requests
 
 
-KAGGLE_DATASETS_DOWNLOAD = "https://www.kaggle.com/api/v1/datasets/download/{owner}/{dataset}"
+KAGGLE_DATASETS_DOWNLOAD = (
+    "https://www.kaggle.com/api/v1/datasets/download/{owner}/{dataset}"
+)
 
 
 class KaggleAuthError(RuntimeError):
@@ -36,7 +38,7 @@ def _require_env(var: str) -> str:
 def _filename_from_cd(content_disposition: Optional[str]) -> Optional[str]:
     if not content_disposition:
         return None
-    match = re.search(r'filename\*=UTF-8''([^;\n]+)', content_disposition)
+    match = re.search(r"filename\*=UTF-8" "([^;\n]+)", content_disposition)
     if match:
         return match.group(1)
     match = re.search(r'filename\s*=\s*"?([^;\n"]+)"?', content_disposition)
@@ -78,9 +80,13 @@ def download_dataset(
 
     url = KAGGLE_DATASETS_DOWNLOAD.format(owner=owner, dataset=dataset)
 
-    with requests.get(url, auth=(username, key), stream=True, timeout=timeout, allow_redirects=True) as r:
+    with requests.get(
+        url, auth=(username, key), stream=True, timeout=timeout, allow_redirects=True
+    ) as r:
         r.raise_for_status()
-        inferred = _filename_from_cd(r.headers.get("Content-Disposition")) or f"{dataset}.zip"
+        inferred = (
+            _filename_from_cd(r.headers.get("Content-Disposition")) or f"{dataset}.zip"
+        )
         zip_name = filename or inferred
         zip_path = dest_zip_dir / zip_name
         if zip_path.exists() and not overwrite:
@@ -100,7 +106,7 @@ def download_dataset(
         shutil.rmtree(dataset_dir)
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(zip_path, 'r') as zf:
+    with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(dataset_dir)
 
     return DownloadResult(dataset=slug, zip_path=zip_path, extract_dir=dataset_dir)
@@ -115,7 +121,12 @@ def bulk_download(
     results = []
     for slug in slugs:
         results.append(
-            download_dataset(slug, dest_zip_dir=raw_dir, dest_extract_dir=extracted_dir, overwrite=overwrite)
+            download_dataset(
+                slug,
+                dest_zip_dir=raw_dir,
+                dest_extract_dir=extracted_dir,
+                overwrite=overwrite,
+            )
         )
     return results
 
@@ -123,7 +134,9 @@ def bulk_download(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Download Kaggle datasets via env auth.")
+    parser = argparse.ArgumentParser(
+        description="Download Kaggle datasets via env auth."
+    )
     parser.add_argument("slugs", nargs="+", help="dataset slugs like owner/name")
     parser.add_argument("--raw-dir", default="data/raw")
     parser.add_argument("--extracted-dir", default="data/extracted")
@@ -131,7 +144,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        results = bulk_download(args.slugs, Path(args.raw_dir), Path(args.extracted_dir), args.overwrite)
+        results = bulk_download(
+            args.slugs, Path(args.raw_dir), Path(args.extracted_dir), args.overwrite
+        )
         for r in results:
             print(f"Downloaded {r.dataset} → {r.zip_path}")
             print(f"Extracted  {r.dataset} → {r.extract_dir}")
