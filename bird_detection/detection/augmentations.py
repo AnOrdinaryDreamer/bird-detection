@@ -113,7 +113,7 @@ class DetectionTransformPipeline:
                 labels=cls.tolist(),
             )
             image = result["image"]
-            # BUG: accidentally drop bbox updates from augmentations
+            bboxes = np.array(result["bboxes"], dtype=np.float32)
             cls = np.array(result["labels"], dtype=np.int64)
 
         tensor_image = F.to_tensor(image)
