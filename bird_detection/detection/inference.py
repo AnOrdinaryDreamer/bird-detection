@@ -10,6 +10,7 @@ import torch
 
 from .dataloaders import DatasetMetadata
 from .models import build_model
+from .topk import enable_topk_predictions
 
 
 def _load_metadata(cfg: Dict[str, Any]) -> DatasetMetadata:
@@ -57,6 +58,10 @@ def load_detector(
         raise KeyError("Model configuration not found within config.json")
 
     model = build_model(model_cfg, metadata.num_classes)
+    topk = model_cfg.get("prediction_topk")
+    if topk is None:
+        topk = 3
+    enable_topk_predictions(model, int(topk))
     state_dict = torch.load(weights_path, map_location=device)
     model.load_state_dict(state_dict)
     model.to(device)

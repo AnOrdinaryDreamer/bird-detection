@@ -85,3 +85,21 @@ def test_format_prediction_limits_results_and_includes_background_when_requested
         "x_max": 3.0,
         "y_max": 3.0,
     }
+
+
+def test_format_prediction_includes_topk_alternatives():
+    raw = {
+        "boxes": torch.tensor([[0, 0, 3, 3]], dtype=torch.float32),
+        "labels": torch.tensor([1], dtype=torch.int64),
+        "scores": torch.tensor([0.9], dtype=torch.float32),
+        "topk_labels": torch.tensor([[1, 2, 0]], dtype=torch.int64),
+        "topk_scores": torch.tensor([[0.9, 0.6, 0.1]], dtype=torch.float32),
+    }
+
+    predictions = format_prediction_for_api(
+        raw, metadata=_metadata(), score_threshold=0.1
+    )
+
+    assert predictions[0].alternatives is not None
+    assert predictions[0].alternatives[0].label == "sparrow"
+    assert predictions[0].alternatives[1].label == "squirrel"

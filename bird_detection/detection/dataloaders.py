@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from PIL import Image
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .augmentations import DetectionTransformPipeline
 
@@ -196,25 +196,66 @@ def _build_class_mappings(
     return bird_label_map, squirrel_label_map, metadata
 
 
-def _split_records(
+def _stratified_split_records(
     records: Sequence[SampleRecord],
     train_ratio: float,
     val_ratio: float,
     seed: int,
+    test_ratio: Optional[float] = None,
 ) -> Tuple[List[SampleRecord], List[SampleRecord], List[SampleRecord]]:
-    if train_ratio + val_ratio > 1.0:
-        raise ValueError("Train + val split ratio cannot exceed 1.0")
-    test_ratio = 1.0 - train_ratio - val_ratio
-    indices = list(range(len(records)))
+    if test_ratio is None:
+        test_ratio = 1.0 - train_ratio - val_ratio
+    total = train_ratio + val_ratio + test_ratio
+    if total > 1.0 + 1e-6:
+        raise ValueError("Train + val + test split ratio cannot exceed 1.0")
+
+    by_label: Dict[int, List[SampleRecord]] = {}
+    for sample in records:
+        if sample.labels.size == 0:
+            label = 0
+        else:
+            label = int(sample.labels[0])
+        by_label.setdefault(label, []).append(sample)
+
     rng = random.Random(seed)
-    rng.shuffle(indices)
-    n = len(records)
-    train_end = int(n * train_ratio)
-    val_end = train_end + int(n * val_ratio)
-    train_split = [records[i] for i in indices[:train_end]]
-    val_split = [records[i] for i in indices[train_end:val_end]]
-    test_split = [records[i] for i in indices[val_end:]]
+    train_split: List[SampleRecord] = []
+    val_split: List[SampleRecord] = []
+    test_split: List[SampleRecord] = []
+
+    for samples in by_label.values():
+        rng.shuffle(samples)
+        n = len(samples)
+        train_end = int(n * train_ratio)
+        val_end = train_end + int(n * val_ratio)
+        test_end = val_end + int(n * test_ratio)
+        train_split.extend(samples[:train_end])
+        val_split.extend(samples[train_end:val_end])
+        test_split.extend(samples[val_end:test_end])
+        test_split.extend(samples[test_end:])  # остаток из-за округления тоже в test
+
+    rng.shuffle(train_split)
+    rng.shuffle(val_split)
+    rng.shuffle(test_split)
     return train_split, val_split, test_split
+
+
+def _sample_weights(samples: Sequence[SampleRecord]) -> List[float]:
+    label_counts: Dict[int, int] = {}
+    for sample in samples:
+        if sample.labels.size == 0:
+            label = 0
+        else:
+            label = int(sample.labels[0])
+        label_counts[label] = label_counts.get(label, 0) + 1
+
+    weights: List[float] = []
+    for sample in samples:
+        if sample.labels.size == 0:
+            label = 0
+        else:
+            label = int(sample.labels[0])
+        weights.append(1.0 / label_counts[label])
+    return weights
 
 
 class BirdSquirrelDetectionDataset(Dataset):
@@ -405,8 +446,15 @@ def build_dataloaders(
 
     train_ratio = float(data_cfg.get("train_split", 0.8))
     val_ratio = float(data_cfg.get("val_split", 0.1))
-    train_samples, val_samples, test_samples = _split_records(
-        records, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed
+    test_ratio = data_cfg.get("test_split")
+    if test_ratio is not None:
+        test_ratio = float(test_ratio)
+    train_samples, val_samples, test_samples = _stratified_split_records(
+        records,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        seed=seed,
+        test_ratio=test_ratio,
     )
 
     mosaic_cfg = (advanced_train_aug or {}).get("mosaic")
@@ -434,7 +482,13 @@ def build_dataloaders(
         collate_fn=detection_collate,
     )
 
-    train_loader = DataLoader(train_dataset, shuffle=True, **loader_kwargs)
+    train_weights = _sample_weights(train_samples)
+    train_sampler = WeightedRandomSampler(
+        train_weights, num_samples=len(train_weights), replacement=True
+    )
+    train_loader = DataLoader(
+        train_dataset, shuffle=False, sampler=train_sampler, **loader_kwargs
+    )
     val_loader = DataLoader(val_dataset, shuffle=False, **loader_kwargs)
     test_loader = DataLoader(test_dataset, shuffle=False, **loader_kwargs)
 

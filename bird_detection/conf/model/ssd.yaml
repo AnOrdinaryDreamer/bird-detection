@@ -2,3 +2,4 @@ name: ssd300_vgg16
 pretrained: true
 weights: DEFAULT
 freeze_backbone: false
+prediction_topk: 3

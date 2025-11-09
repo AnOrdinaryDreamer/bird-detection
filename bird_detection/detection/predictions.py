@@ -11,10 +11,17 @@ from .dataloaders import DatasetMetadata
 
 
 @dataclass
+class ClassAlternative:
+    label: str
+    score: float
+
+
+@dataclass
 class ApiPrediction:
     label: str
     score: float
     bbox: Optional[Dict[str, float]]
+    alternatives: Optional[List[ClassAlternative]] = None
 
 
 def _ensure_tensor(value: Optional[torch.Tensor], shape: Sequence[int]) -> torch.Tensor:
@@ -63,8 +70,12 @@ def format_prediction_for_api(
     """
 
     boxes = _ensure_tensor(raw_prediction.get("boxes"), (0, 4))
-    labels = _ensure_tensor(raw_prediction.get("labels"), (0,))
+    labels = _ensure_tensor(raw_prediction.get("labels"), (0,)).to(torch.int64)
     scores = _ensure_tensor(raw_prediction.get("scores"), (0,))
+    topk_labels = _ensure_tensor(raw_prediction.get("topk_labels"), (0, 0)).to(
+        torch.int64
+    )
+    topk_scores = _ensure_tensor(raw_prediction.get("topk_scores"), (0, 0))
     count = min(boxes.shape[0], labels.shape[0], scores.shape[0])
 
     predictions: List[ApiPrediction] = []
@@ -77,11 +88,19 @@ def format_prediction_for_api(
             continue
         label_name = metadata.id2label.get(label_id, f"class_{label_id}")
         bbox = _box_to_dict(boxes[idx])
+        alternatives = _build_alternatives(
+            idx,
+            topk_labels,
+            topk_scores,
+            metadata,
+            include_background=include_background,
+        )
         predictions.append(
             ApiPrediction(
                 label=label_name,
                 score=score,
                 bbox=bbox,
+                alternatives=alternatives,
             )
         )
         if max_detections and len(predictions) >= max_detections:
@@ -90,3 +109,28 @@ def format_prediction_for_api(
     if not predictions:
         predictions.append(ApiPrediction(label=not_found_label, score=1.0, bbox=None))
     return predictions
+
+
+def _build_alternatives(
+    det_index: int,
+    topk_labels: torch.Tensor,
+    topk_scores: torch.Tensor,
+    metadata: DatasetMetadata,
+    include_background: bool,
+) -> Optional[List[ClassAlternative]]:
+    if topk_labels.ndim != 2 or topk_scores.ndim != 2:
+        return None
+    if det_index >= topk_labels.shape[0]:
+        return None
+    alt_count = min(topk_labels.shape[1], topk_scores.shape[1])
+    if alt_count == 0:
+        return None
+    alternatives: List[ClassAlternative] = []
+    for alt_idx in range(alt_count):
+        label_id = int(topk_labels[det_index, alt_idx].item())
+        if label_id == 0 and not include_background:
+            continue
+        score = float(topk_scores[det_index, alt_idx].item())
+        label_name = metadata.id2label.get(label_id, f"class_{label_id}")
+        alternatives.append(ClassAlternative(label=label_name, score=score))
+    return alternatives or None

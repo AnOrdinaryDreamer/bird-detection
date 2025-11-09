@@ -5,3 +5,4 @@ min_size: 640
 max_size: 1024
 trainable_backbone_layers: 3
 freeze_backbone: false
+prediction_topk: 3

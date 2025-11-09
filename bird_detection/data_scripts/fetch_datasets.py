@@ -1,5 +1,5 @@
 from pathlib import Path
-from download_kaggle_dataset import bulk_download
+from .download_kaggle_dataset import bulk_download
 
 BIRD_DATASET = "wenewone/cub2002011"
 SQUIRREL_DATASET = "olgreyfox/openimagev7-raccoonsquirrelskunkmouserabbit"
