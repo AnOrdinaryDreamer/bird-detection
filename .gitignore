@@ -4,3 +4,16 @@
 .virtualenv_app_data/
 __pycache__/
 *.py[cod]
+
+# Data directories
+/data/raw/         # Kaggle archives (not versioned, can be re-downloaded)
+/data/extracted/   # Extracted datasets (versioned in DVC)
+
+# Training outputs
+/outputs/
+
+# Temporary files
+*.log
+.DS_Store
+*.swp
+*~
