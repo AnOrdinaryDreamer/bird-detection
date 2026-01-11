@@ -1,0 +1,17 @@
+# Generated artifacts
+model_artifacts/
+model-store/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

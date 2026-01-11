@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Data and outputs (not needed in container)
+data/
+outputs/tensorboard/
+outputs/evaluation/
+outputs/current_run/
+
+# Tests
+tests/
+*.pytest_cache/
+
+# Documentation
+*.md
+docs/
+
+# DVC
+.dvc/
+*.dvc
+
+# Other
+.DS_Store
+*.log

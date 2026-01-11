@@ -434,6 +434,371 @@ docker build -t ml-app:v1 .
 git checkout HEAD -- dvc.lock
 ```
 
+## TorchServe: Online Inference API
+
+Проект включает развёртывание модели с помощью **TorchServe** с предоставлением REST API.
+
+### Сборка и запуск
+
+Вместо poetry run можно использовать терминал, созданный poetry shell
+
+#### 1. Загрузка модели из удалённого хранилища (опционально)
+
+Если у вас нет модели локально или хотите использовать конкретную версию:
+
+```bash
+# Убедитесь что настроены ключи для доступа к удалённому хранилищу в локальном конфиге DVC
+
+# Сохраняем текущий dvc.lock
+cp dvc.lock dvc.lock.backup
+
+# Checkout dvc.lock с рекомендуемой версией модели
+git show 3de13f272ca8ea3164da141cdc0e009eb624337d:dvc.lock > dvc.lock
+
+# Загружаем модель
+poetry run dvc pull outputs/trained_model
+
+# Восстанавливаем dvc.lock (опционально)
+mv dvc.lock.backup dvc.lock
+```
+
+#### 2. Развёртывание (автоматический)
+
+```bash
+cd bird-detection
+bash torchserve/build_and_run.sh
+```
+
+Скрипт автоматически:
+1. ✅ Экспортирует модель (`export_model.py`)
+2. ✅ Создаёт MAR архив (`create_mar.sh`)
+3. ✅ Собирает Docker образ
+4. ✅ Запускает контейнер
+5. ✅ Проверяет работоспособность
+
+#### 2 (а). Ручной деплой (пошаговый)
+
+**Шаг 1:** Экспорт модели
+
+```bash
+PYTHONPATH="$PWD" poetry run python torchserve/export_model.py \
+    --model_dir outputs/trained_model \
+    --output_dir torchserve/model_artifacts
+```
+
+Создаёт:
+- `model.pt` — state_dict модели
+- `config.json` — конфигурация
+- `label_map.json` — маппинг классов
+- `index_to_name.json` — для TorchServe
+
+**Шаг 2:** Создание MAR архива
+
+```bash
+cd torchserve
+bash create_mar.sh
+cd ..
+```
+Создаёт `model-store/bird_detection.mar`
+
+
+**Шаг 3:** Сборка Docker образа
+
+```bash
+docker build -f torchserve/Dockerfile -t bird-detection-serve:v1 .
+```
+
+**Шаг 4:** Запуск контейнера
+
+```bash
+docker run -d \
+    --name bird-detection-torchserve \
+    -p 8080:8080 \
+    -p 8081:8081 \
+    -p 8082:8082 \
+    bird-detection-serve:v1
+```
+
+**Шаг 5:** Проверка
+
+```bash
+# Health check
+curl http://localhost:8080/ping
+# Ответ: {"status": "Healthy"}
+```
+
+### API Endpoints
+
+- **8080** — Inference API (предсказания)
+- **8081** — Management API (управление моделями)  
+- **8082** — Metrics API (метрики Prometheus)
+
+### Примеры REST-запросов
+
+#### Базовый запрос (default threshold=0.2)
+
+```bash
+curl -X POST http://localhost:8080/predictions/bird_detection \
+    -T image.jpg \
+    -H "Content-Type: application/octet-stream"
+```
+
+#### С кастомным threshold через HTTP header
+
+```bash
+# Высокий порог (более уверенные детекции)
+curl -X POST http://localhost:8080/predictions/bird_detection \
+    -H "X-Threshold: 0.5" \
+    -T image.jpg \
+    -H "Content-Type: application/octet-stream"
+```
+
+#### Python пример
+
+```python
+import requests
+
+def detect_birds(image_path, threshold=0.2):
+    """Детектирует птиц/белок на изображении"""
+    url = "http://localhost:8080/predictions/bird_detection"
+    
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Threshold": str(threshold)
+    }
+    
+    with open(image_path, 'rb') as f:
+        response = requests.post(url, data=f, headers=headers)
+    
+    return response.json()
+
+# Использование
+result = detect_birds("bird.jpg", threshold=0.3)
+print(f"Найдено: {result['num_detections']} детекций")
+print(f"Threshold: {result['threshold_used']}")
+
+for det in result['detections']:
+    print(f"- {det['label']}: {det['score']:.2%}")
+    print(f"  BBox: {det['bbox']}")
+```
+
+### Автоматическое тестирование
+
+Для быстрой проверки работоспособности используйте скрипт `test_service.py`:
+
+```bash
+# Базовая проверка (ping, список моделей, информация)
+poetry run python torchserve/test_service.py
+
+# С тестом inference на конкретном изображении
+poetry run python torchserve/test_service.py \
+    --image bird_detection/data/selected/squirrels/images/db2cc1f44a8ca429.jpg
+```
+
+**Что проверяет скрипт:**
+1. ✅ **Ping** — доступность сервиса
+2. ✅ **List models** — список зарегистрированных моделей  
+3. ✅ **Model info** — информация о модели (workers, статус)
+4. ✅ **Prediction** — inference модели
+
+**Параметры:**
+```bash
+--inference-url URL    # URL для inference (default: http://localhost:8080)
+--management-url URL   # URL для management (default: http://localhost:8081)
+--model-name NAME      # Имя модели (default: bird_detection)
+--image PATH           # Путь к тестовому изображению
+```
+
+**Пример вывода:**
+```
+=== TorchServe Service Test ===
+
+Test 1: Ping service
+✓ Service is alive
+
+Test 2: List registered models
+✓ Registered models: [...] 
+
+Test 3: Get model information
+✓ Model: bird_detection, Workers: 2, Status: READY
+
+Test 4: Run prediction (binary)
+✓ Prediction successful
+Detections: 1
+- squirrel: 52.1%
+
+Test 5: Run prediction (JSON)
+✓ Prediction successful
+
+✓ All tests completed!
+```
+
+#### Формат входных данных
+
+TorchServe поддерживает два формата:
+
+**1. Бинарные данные (рекомендуется для production)**
+
+```bash
+curl -X POST http://localhost:8080/predictions/bird_detection \
+    -T /path/to/image.jpg \
+    -H "Content-Type: application/octet-stream"
+```
+
+**2. JSON с base64-кодированным изображением**
+
+```bash
+curl -X POST http://localhost:8080/predictions/bird_detection \
+    -H "Content-Type: application/json" \
+    -d '{
+      "image": "BASE64_ENCODED_IMAGE_STRING"
+    }'
+```
+
+#### Формат выходных данных
+
+Ответ API в формате JSON:
+
+```json
+{
+  "detections": [
+    {
+      "label": "017.Cardinal",
+      "label_id": 8,
+      "score": 0.9234,
+      "bbox": {
+        "x_min": 145.32,
+        "y_min": 78.45,
+        "x_max": 312.67,
+        "y_max": 289.12
+      },
+      "alternatives": [
+        {
+          "label": "016.Painted_Bunting",
+          "label_id": 7,
+          "score": 0.0543
+        },
+        {
+          "label": "015.Lazuli_Bunting",
+          "label_id": 6,
+          "score": 0.0123
+        }
+      ]
+    }
+  ],
+  "num_detections": 1,
+  "threshold_used": 0.2
+}
+```
+
+**Поля ответа:**
+- `detections` — список обнаруженных объектов
+- `label` — название класса (вид птицы или "squirrel")
+- `label_id` — числовой ID класса
+- `score` — уверенность модели (0-1)
+- `bbox` — координаты bounding box в пикселях
+- `alternatives` — топ-K альтернативных предсказаний (если доступны)
+- `num_detections` — количество обнаружений
+- `threshold_used` — использованный порог уверенности
+
+
+
+### Параметры конфигурации
+
+#### Threshold (confidence порог)
+
+- **Default:** `0.2`
+- **Передача:** через HTTP header `X-Threshold`
+- **Рекомендации:**
+  - `0.1-0.2` — высокая recall (больше детекций, возможны ложные срабатывания)
+  - `0.3-0.4` — баланс precision/recall
+  - `0.5+` — высокая precision (только уверенные детекции)
+
+#### TorchServe настройки (config.properties)
+
+```properties
+# Workers на модель
+default_workers_per_model=2
+
+# Таймаут ответа (секунды)
+default_response_timeout=120
+
+# Размер очереди
+job_queue_size=100
+
+# Максимальный размер запроса/ответа (MB)
+max_request_size=100
+max_response_size=100
+
+# Envelope формат (body для бинарных данных)
+service_envelope=body
+```
+
+#### Docker образ
+
+```dockerfile
+# TorchServe версия
+FROM pytorch/torchserve:0.11.1-cpu
+
+# Лимиты запросов (байты)
+ENV TS_MAX_REQUEST_SIZE=104857600
+ENV TS_MAX_RESPONSE_SIZE=104857600
+
+# JVM память
+ENV JAVA_TOOL_OPTIONS="-Xmx2048m -Xms1024m"
+
+# Netty threads
+ENV TS_NUMBER_OF_NETTY_THREADS=4
+```
+
+### Управление контейнером
+
+```bash
+# Логи
+docker logs -f bird-detection-torchserve
+# Остановка
+docker stop bird-detection-torchserve
+# Запуск
+docker start bird-detection-torchserve
+# Удаление
+docker rm -f bird-detection-torchserve
+# Статистика
+docker stats bird-detection-torchserve
+```
+
+### Management API
+
+```bash
+# Информация о модели
+curl http://localhost:8081/models/bird_detection | python3 -m json.tool
+
+# Список всех моделей
+curl http://localhost:8081/models
+```
+
+### Метрики
+
+```bash
+# Все метрики Prometheus
+curl http://localhost:8082/metrics
+
+# Только для bird_detection
+curl "http://localhost:8082/metrics?name=bird_detection"
+```
+
+**Ключевые метрики:**
+- `ts_inference_requests_total` — количество запросов
+- `ts_inference_latency_microseconds` — задержка inference
+- `ts_queue_latency_microseconds` — время в очереди
+
+### Производительность
+
+- **Inference latency:** ~260-300ms (CPU, 2 workers)
+- **Throughput:** ~6-7 requests/sec
+- **Memory:** ~512 MB на worker
+- **Image size:** ~8.5 GB (TorchServe + PyTorch + dependencies + model)
+---
+
 # Использование кода
 
 ## Быстрый старт (рекомендуется)
@@ -651,3 +1016,44 @@ Hydra автоматически создаёт подпапку в `outputs/` �
 
 ### Заметки
 * TensorBoard логи живут в `${hydra:run.dir}/tensorboard`, output-модель — `${hydra:run.dir}/trained_model`.
+
+
+#### Локальный запуск TorchServe без Docker
+
+Для разработки можно запустить TorchServe локально:
+
+```bash
+# Установите TorchServe
+pip install torchserve torch-model-archiver
+
+# Запустите сервис
+torchserve --start \
+    --model-store torchserve/model-store \
+    --models bird_detection=bird_detection.mar \
+    --ts-config torchserve/config.properties
+
+# Остановка
+torchserve --stop
+```
+#### Структура файлов TorchServe
+
+```
+torchserve/
+├── handler.py              # Кастомный обработчик (pre/post-processing)
+├── export_model.py         # Скрипт экспорта модели
+├── create_mar.sh           # Создание .mar архива
+├── Dockerfile              # Docker образ с TorchServe
+├── config.properties       # Конфигурация TorchServe
+├── requirements.txt        # Python зависимости
+├── build_and_run.sh        # Автоматическое развёртывание
+├── test_service.py         # Тесты API
+├── curl_examples.sh        # Примеры curl команд
+├── sample_request.json     # Пример JSON запроса
+├── model_artifacts/        # Экспортированные артефакты (генерируется)
+│   ├── model.pt
+│   ├── config.json
+│   ├── label_map.json
+│   └── index_to_name.json
+└── model-store/            # Архивы моделей (генерируется)
+    └── bird_detection.mar
+```

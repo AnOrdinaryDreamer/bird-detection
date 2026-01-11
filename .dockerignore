@@ -1,0 +1,54 @@
+# Данные (не нужны для инференса)
+data/
+bird_detection/data/
+bird_detection/data_scripts/
+
+# Результаты обучения (модель загружается через DVC)
+outputs/
+mlruns/
+
+# Виртуальные окружения
+.venv/
+.poetry_cache/
+.poetry_venvs/
+.virtualenv_app_data/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Тяжёлые файлы модели и данных
+*.pt
+*.pth
+*.bin
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.onnx
+*.csv
+*.zip
+
+# Git
+.git/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Тесты
+tests/
+
+# Логи
+*.log
+
+# Docker
+Dockerfile
+docker-compose*
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints/
