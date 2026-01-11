@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import mlflow
 import torch
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import _LRScheduler
@@ -101,6 +102,14 @@ class DetectionTrainer:
                 self.writer.add_scalar("epoch/train_loss", train_loss, epoch)
                 if val_loss is not None:
                     self.writer.add_scalar("epoch/val_loss", val_loss, epoch)
+            
+            # Логируем epoch метрики в MLflow
+            if mlflow.active_run():
+                mlflow.log_metric("epoch_train_loss", train_loss, step=epoch)
+                if val_loss is not None:
+                    mlflow.log_metric("epoch_val_loss", val_loss, step=epoch)
+                if self.scheduler is not None:
+                    mlflow.log_metric("epoch_lr", self.optimizer.param_groups[0]["lr"], step=epoch)
 
         epoch_pbar.close()
 
@@ -197,6 +206,11 @@ class DetectionTrainer:
                 if self.writer:
                     self.writer.add_scalar("train/loss", avg_loss, self.global_step)
                     self.writer.add_scalar("train/lr", lr, self.global_step)
+                
+                # Логируем в MLflow если активен run
+                if mlflow.active_run():
+                    mlflow.log_metric("train_loss", avg_loss, step=self.global_step)
+                    mlflow.log_metric("learning_rate", lr, step=self.global_step)
 
         train_pbar.close()
         return running_loss / max(1, step_count)
@@ -238,6 +252,11 @@ class DetectionTrainer:
         self.logger.info("%s loss: %.4f", split.capitalize(), avg_loss)
         if self.writer:
             self.writer.add_scalar(f"{split}/loss", avg_loss, self.global_step)
+        
+        # Логируем метрики оценки в MLflow
+        if mlflow.active_run():
+            mlflow.log_metric(f"{split}_loss", avg_loss)
+        
         return avg_loss
 
     def _save_checkpoint(self, checkpoint_dir: Path, epoch: int, filename: str) -> None:

@@ -230,7 +230,75 @@ git checkout exp-1
 poetry run dvc repro
 ```
 
-### 📊 Метрики качества
+### MLflow: трекинг экспериментов
+
+MLflow автоматически отслеживает все запуски обучения. Каждый `python -m bird_detection.detection.train` создаёт отдельный run с фиксацией параметров, метрик и артефактов.
+
+#### Запуск UI
+
+```bash
+cd bird-detection
+poetry run mlflow ui --backend-store-uri mlruns
+```
+
+#### Что отслеживается
+
+- **Параметры**: все гиперпараметры из конфигурации (lr, batch_size, model, optimizer...)
+- **Метрики**: train_loss, val_loss на каждой эпохе + графики
+- **Артефакты**: модель, чекпоинты, конфигурация, dvc.lock
+- **Теги**: DVC хеши датасетов для отслеживания версии данных
+
+#### Структура хранения
+
+```
+mlruns/
+├── <experiment_id>/              # ID эксперимента (по имени из конфигурации, по умолчанию "bird_detection")
+│   ├── meta.yaml                 # Имя и время создания эксперимента
+│   │
+│   ├── <run_id_1>/               # Первый запуск
+│   │   ├── params/               # Все параметры (lr, epochs, model...)
+│   │   ├── metrics/              # История метрик (train_loss, val_loss...)
+│   │   ├── tags/                 # DVC хеши, device, user
+│   │   └── artifacts/            # Модель, чекпоинты, dvc.lock
+│   │
+│   └── <run_id_2>/               # Второй запуск (полностью независим)
+│       └── ...
+│
+```
+
+- **Experiment** = группа run'ов с одним именем (например, `bird_detection`)
+- **Run** = один запуск обучения с уникальным ID
+- Имя эксперимента задаётся в конфигурации через `mlflow.experiment_name` (можно менять через CLI)
+
+```bash
+# Создать отдельный эксперимент для тюнинга lr
+python -m bird_detection.detection.train mlflow.experiment_name="lr_tuning"
+```
+
+####  MLflow → DVC
+
+**MLflow** — для быстрых экспериментов с гиперпараметрами:
+```bash
+# Запуск множества экспериментов подряд (без git/dvc между ними)
+python -m bird_detection.detection.train training.lr=0.0001 training.epochs=5
+python -m bird_detection.detection.train training.lr=0.0005 training.epochs=5
+python -m bird_detection.detection.train training.lr=0.001 training.epochs=10
+
+# Отбор лучших после сравнения результатов в MLFlow
+```
+
+**DVC** — для фиксации лучшей модели в pipeline:
+```bash
+# После выбора лучших параметров обновляем dvc.yaml (подставив нужный файл конфигурации) и запускаем:
+poetry run dvc repro
+git add dvc.lock dvc.yaml
+git commit -m "Best model at Experiment 2: lr=0.0005, epochs=5"
+poetry run dvc push
+```
+
+**Важно**: `mlruns/` хранится локально и не версионируется.
+
+###  Метрики качества
 
 После обучения метрики доступны в:
 - `outputs/evaluation/metrics.json` — числовые метрики (mAP, AP по классам)
@@ -243,7 +311,7 @@ poetry run dvc repro
 tensorboard --logdir outputs/tensorboard
 ```
 
-### 🌐 Удалённое хранилище
+### Удалённое хранилище
 
 - **Провайдер:** Yandex Cloud Object Storage
 - **Bucket:** mlops-homework-17

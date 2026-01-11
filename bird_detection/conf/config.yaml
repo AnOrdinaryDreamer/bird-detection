@@ -4,6 +4,7 @@ defaults:
   - training: default
   - logging: default
   - augmentations: default
+  - mlflow: default
   - _self_
 
 seed: 42

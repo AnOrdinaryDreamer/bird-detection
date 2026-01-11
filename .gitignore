@@ -12,6 +12,9 @@ __pycache__/
 # Training outputs
 /outputs/
 
+# MLflow tracking
+/mlruns/
+
 # Temporary files
 *.log
 .DS_Store

@@ -1,0 +1,7 @@
+# MLflow tracking configuration
+tracking_uri: mlruns  # Local directory for MLflow tracking
+experiment_name: bird_detection  # Name of the experiment in MLflow UI
+run_name: null  # Optional: specific run name (null = auto-generated)
+log_model: true  # Whether to log the model as an MLflow artifact
+log_artifacts: true  # Whether to log additional artifacts (plots, etc.)
+log_system_metrics: false  # Whether to log system metrics (CPU, GPU, etc.)
