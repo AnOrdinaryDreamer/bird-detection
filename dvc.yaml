@@ -5,7 +5,8 @@ stages:
       - data/raw
       - bird_detection/data_scripts/extract_archives.py
     outs:
-      - data/extracted
+      - data/extracted:
+          cache: false
 
   prepare:
     cmd: >-
