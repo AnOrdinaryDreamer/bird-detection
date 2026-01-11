@@ -324,6 +324,116 @@ tensorboard --logdir outputs/tensorboard
 3. Экспортируйте переменные окружения (см. выше)
 
 
+## Docker: Офлайн-инференс
+
+Проект упакован в Docker-образ для развёртывания модели на оффлайн-инференс.
+
+### Сборка образа
+
+```bash
+docker build -t ml-app:v1 .
+```
+
+**Что происходит при сборке:**
+1. **Stage 1 (model-downloader)**: DVC загружает модель из Yandex Object Storage
+   - Модель определяется файлом `dvc.lock` в текущем коммите
+   - Для сборки с моделью из другого коммита: `git checkout <tag>` перед `docker build`
+2. **Stage 2 (final)**: Устанавливаются только runtime-зависимости
+   - PyTorch CPU-only версия (~2GB вместо ~10GB CUDA)
+   - Без создания виртуального окружения
+   - Модель копируется из Stage 1
+
+**Размер образа:** ~4GB (PyTorch CPU-only + зависимости + модель 120MB)
+
+### Запуск контейнера
+
+```bash
+docker run --rm \
+  -v /path/to/images:/data/input \
+  -v /path/to/output:/data/output \
+  ml-app:v1 \
+  --input_path /data/input \
+  --output_path /data/output/preds.csv
+```
+
+**Пример с локальными путями:**
+
+```bash
+# Из корня проекта
+docker run --rm \
+  -v $(pwd)/test_images:/data/input \
+  -v $(pwd)/test_output:/data/output \
+  ml-app:v1 \
+  --input_path /data/input \
+  --output_path /data/output/preds.csv
+```
+
+### Скрипт predict.py
+
+Скрипт `bird_detection/predict.py` выполняет офлайн-инференс:
+
+**Входные данные:**
+- Путь к файлу изображения (`.jpg`, `.jpeg`, `.png`)
+- Путь к директории с изображениями
+
+**Выходные данные:**
+CSV файл с колонками:
+- `image_path` — путь к изображению
+- `detection_id` — порядковый номер детекции на изображении
+- `label` — предсказанный класс (вид птицы или `squirrel`)
+- `score` — уверенность модели (0-1)
+- `x_min`, `y_min`, `x_max`, `y_max` — координаты bounding box в пикселях
+- `alternatives` — топ-3 альтернативных класса с оценками (JSON)
+
+**Опции:**
+```bash
+--input_path PATH      # Путь к изображению или директории (обязательно)
+--output_path PATH     # Путь для CSV с результатами (обязательно)
+--threshold FLOAT      # Порог уверенности (по умолчанию: 0.25)
+--model_dir PATH       # Путь к модели (по умолчанию: автоопределение)
+```
+
+**Пример результата (preds.csv):**
+
+```csv
+image_path,detection_id,label,score,x_min,y_min,x_max,y_max,alternatives
+/data/input/squirrel.jpg,0,squirrel,0.52,40.37,52.84,422.25,295.19,"[{""label"": ""squirrel"", ""score"": 0.52}, ...]"
+/data/input/bird.jpg,0,074.Florida_Jay,0.65,85.63,107.4,381.62,394.85,"[{""label"": ""074.Florida_Jay"", ""score"": 0.65}, ...]"
+/data/input/empty.jpg,0,not_found,1.0,,,,,
+```
+
+### Версионирование модели через DVC + Docker
+
+Для сборки образа с моделью из определённого коммита/тега:
+
+```bash
+# Вариант 1: Checkout только dvc.lock (рекомендуется)
+# Это позволяет использовать текущий Dockerfile с моделью из другого коммита
+git checkout <commit_hash> -- dvc.lock
+docker build -t ml-app:v1 .
+git checkout HEAD -- dvc.lock  # вернуть обратно
+
+# Вариант 2: Полный checkout коммита (если Dockerfile не изменился)
+git checkout <commit_hash>
+docker build -t ml-app:v1 .
+git checkout main
+```
+
+**Рекомендуемая версия модели:**
+
+Среди загруженных моделей рекомендуется модель из коммита `3de13f272ca8ea3164da141cdc0e009eb624337d` (Finish DVC task part):
+
+```bash
+# Checkout только dvc.lock с версией модели из этого коммита
+git checkout 3de13f272ca8ea3164da141cdc0e009eb624337d -- dvc.lock
+
+# Собираем образ с текущим Dockerfile, но с моделью из указанного коммита
+docker build -t ml-app:v1 .
+
+# Возвращаем dvc.lock обратно
+git checkout HEAD -- dvc.lock
+```
+
 # Использование кода
 
 ## Быстрый старт (рекомендуется)
