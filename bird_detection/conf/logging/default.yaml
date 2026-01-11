@@ -1,2 +1,2 @@
 log_level: INFO
-tensorboard_dir: ${hydra:run.dir}/tensorboard
+tensorboard_dir: outputs/tensorboard

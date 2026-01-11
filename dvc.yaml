@@ -1,0 +1,82 @@
+stages:
+  extract:
+    cmd: python bird_detection/data_scripts/extract_archives.py
+    deps:
+      - data/raw
+      - bird_detection/data_scripts/extract_archives.py
+    outs:
+      - data/extracted
+
+  prepare:
+    cmd: >-
+      python bird_detection/data_scripts/extract_cub_birds.py
+      --data-root data/extracted/cub2002011/CUB_200_2011
+      --dest-root bird_detection/data/selected/birds
+      --include 9 10 11 12 14 15 16 17 19 21 26 27 28 29 35 47 48 49 54 55 56 57 67 68 69 73 74 75 76 91 94 95 96 97 116 118 120 129 130 132 133 148 171 175 189 191 192 193 195 196 200
+      --max-dim 500 &&
+      python bird_detection/data_scripts/extract_squirrels.py
+      --source-root data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/OID_YOLOv8_Dataset
+      --dest-root bird_detection/data/selected/squirrels
+      --class-id 84
+      --max-dim 500
+    deps:
+      - data/extracted/cub2002011/CUB_200_2011
+      - data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/OID_YOLOv8_Dataset
+      - bird_detection/data_scripts/extract_cub_birds.py
+      - bird_detection/data_scripts/extract_squirrels.py
+    outs:
+      - bird_detection/data/selected/birds
+      - bird_detection/data/selected/squirrels
+
+  train:
+    cmd: >-
+      python -m bird_detection.detection.train
+      model=ssd
+      training.epochs=5
+    deps:
+      - bird_detection/data/selected
+      - bird_detection/detection/train.py
+      - bird_detection/detection/trainer.py
+      - bird_detection/detection/models.py
+      - bird_detection/detection/dataloaders.py
+      - bird_detection/detection/augmentations.py
+      - bird_detection/conf
+    params:
+      - bird_detection/conf/config.yaml:
+          - seed
+      - bird_detection/conf/data/dataset.yaml:
+          - train_split
+          - val_split
+      - bird_detection/conf/model/ssd.yaml:
+          - name
+          - pretrained
+      - bird_detection/conf/training/default.yaml:
+          - batch_size
+          - lr
+          - optimizer
+          - epochs
+    outs:
+      - outputs/trained_model:
+          cache: true
+    plots:
+      - outputs/tensorboard:
+          cache: false
+
+  evaluate:
+    cmd: >-
+      python -m bird_detection.detection.evaluate
+      --model-dir outputs/trained_model
+      --data-dir bird_detection/data/selected
+      --output-dir outputs/evaluation
+    deps:
+      - bird_detection/data/selected
+      - outputs/trained_model
+      - bird_detection/detection/evaluate.py
+    metrics:
+      - outputs/evaluation/metrics.json:
+          cache: true
+    plots:
+      - outputs/evaluation/confusion_matrix.png:
+          cache: true
+      - outputs/evaluation/pr_curves.json:
+          cache: true

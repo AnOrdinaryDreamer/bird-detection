@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import torch
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import _LRScheduler
+from tqdm import tqdm
 
 
 Batch = Tuple[List[torch.Tensor], List[Dict[str, torch.Tensor]]]
@@ -53,7 +54,15 @@ class DetectionTrainer:
         best_path: Optional[Path] = None
         best_state_path: Optional[Path] = None
 
-        for epoch in range(start_epoch, max_epochs + 1):
+        # Epoch progress bar
+        epoch_pbar = tqdm(
+            range(start_epoch, max_epochs + 1),
+            desc="Training",
+            initial=start_epoch - 1,
+            total=max_epochs,
+        )
+
+        for epoch in epoch_pbar:
             train_loss = self._train_one_epoch(train_loader, epoch)
             val_loss = (
                 self._evaluate(val_loader, split="val")
@@ -78,10 +87,22 @@ class DetectionTrainer:
                     "New best model saved at %s (val_loss=%.4f)", best_path, best_val
                 )
 
+            # Update epoch progress bar
+            if val_loss is not None:
+                epoch_pbar.set_postfix(
+                    train_loss=f"{train_loss:.4f}",
+                    val_loss=f"{val_loss:.4f}",
+                    best=f"{best_val:.4f}",
+                )
+            else:
+                epoch_pbar.set_postfix(train_loss=f"{train_loss:.4f}")
+
             if self.writer:
                 self.writer.add_scalar("epoch/train_loss", train_loss, epoch)
                 if val_loss is not None:
                     self.writer.add_scalar("epoch/val_loss", val_loss, epoch)
+
+        epoch_pbar.close()
 
         metrics: Dict[str, float | str] = {
             "train_loss": train_loss,
@@ -119,7 +140,15 @@ class DetectionTrainer:
         step_count = 0
         last_log_time = time.perf_counter()
 
-        for step, batch in enumerate(data_loader, start=1):
+        # Training progress bar
+        train_pbar = tqdm(
+            enumerate(data_loader, start=1),
+            total=len(data_loader),
+            desc=f"Epoch {epoch}",
+            leave=False,
+        )
+
+        for step, batch in train_pbar:
             images, targets = self._prepare_batch(batch)
             self.optimizer.zero_grad()
 
@@ -148,9 +177,12 @@ class DetectionTrainer:
             self.global_step += 1
             step_count = step
 
+            # Update progress bar
+            avg_loss = running_loss / step
+            lr = self.optimizer.param_groups[0]["lr"]
+            train_pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr:.6f}")
+
             if step % self.log_every == 0:
-                avg_loss = running_loss / step
-                lr = self.optimizer.param_groups[0]["lr"]
                 now = time.perf_counter()
                 iter_time = (now - last_log_time) / self.log_every
                 last_log_time = now
@@ -166,6 +198,7 @@ class DetectionTrainer:
                     self.writer.add_scalar("train/loss", avg_loss, self.global_step)
                     self.writer.add_scalar("train/lr", lr, self.global_step)
 
+        train_pbar.close()
         return running_loss / max(1, step_count)
 
     def _evaluate(self, data_loader: Iterable[Batch], split: str) -> float:
@@ -177,13 +210,26 @@ class DetectionTrainer:
         total_loss = 0.0
         total_steps = 0
 
+        # Evaluation progress bar
+        eval_pbar = tqdm(
+            data_loader,
+            desc=f"Eval {split}",
+            leave=False,
+        )
+
         with torch.no_grad():
-            for batch in data_loader:
+            for batch in eval_pbar:
                 images, targets = self._prepare_batch(batch)
                 loss_dict = self.model(images, targets)
                 losses = sum(loss for loss in loss_dict.values())
                 total_loss += losses.item()
                 total_steps += 1
+                
+                # Update progress bar
+                avg_loss = total_loss / total_steps
+                eval_pbar.set_postfix(loss=f"{avg_loss:.4f}")
+
+        eval_pbar.close()
 
         if not was_training:
             self.model.eval()

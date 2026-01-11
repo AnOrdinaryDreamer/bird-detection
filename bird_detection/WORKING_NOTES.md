@@ -38,3 +38,18 @@ scores (Tensor[N]): the scores of each detection
   * `pytest tests/test_predictions.py` — форматирование выводов модели в API (`bbox`, фильтрация по порогу, fallback `not_found`).
 * Визуальная проверка денормализации: `python -m bird_detection.data_scripts.visualize_bboxes --images-dir bird_detection/data/selected/birds/<class_dir>/images --labels-dir bird_detection/data/selected/birds/<class_dir>/labels_pixel --output-dir outputs/bbox_viz/<class_dir> --limit 5 --shuffle`.
 
+
+
+### Добавление новых данных или моделей в DVC
+
+```bash
+# Добавить директорию в DVC
+dvc add path/to/data
+
+# Зафиксировать в git
+git add path/to/data.dvc .gitignore
+git commit -m "Add new dataset version"
+
+# Отправить в remote
+dvc push
+```

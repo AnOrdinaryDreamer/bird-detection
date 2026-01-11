@@ -1,0 +1,152 @@
+schema: '2.0'
+stages:
+  extract:
+    cmd: python bird_detection/data_scripts/extract_archives.py
+    deps:
+    - path: bird_detection/data_scripts/extract_archives.py
+      hash: md5
+      md5: ade364461ecf9fc390e099dd063397ff
+      size: 1281
+    - path: data/raw
+      hash: md5
+      md5: ff578e62300e662c364697cff2c768e2.dir
+      size: 2907970701
+      nfiles: 3
+    outs:
+    - path: data/extracted
+      hash: md5
+      md5: 6abc37e9f4d9ff52a3c7d2fae925dc12.dir
+      size: 8824180654
+      nfiles: 55918
+  prepare:
+    cmd: python bird_detection/data_scripts/extract_cub_birds.py --data-root 
+      data/extracted/cub2002011/CUB_200_2011 --dest-root 
+      bird_detection/data/selected/birds --include 9 10 11 12 14 15 16 17 19 21 
+      26 27 28 29 35 47 48 49 54 55 56 57 67 68 69 73 74 75 76 91 94 95 96 97 
+      116 118 120 129 130 132 133 148 171 175 189 191 192 193 195 196 200 
+      --max-dim 500 && python bird_detection/data_scripts/extract_squirrels.py 
+      --source-root 
+      data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/OID_YOLOv8_Dataset
+      --dest-root bird_detection/data/selected/squirrels --class-id 84 --max-dim
+      500
+    deps:
+    - path: bird_detection/data_scripts/extract_cub_birds.py
+      hash: md5
+      md5: 769c326c49a4abd0b3580c6bbc169b47
+      size: 8627
+    - path: bird_detection/data_scripts/extract_squirrels.py
+      hash: md5
+      md5: 06917ac740277b046e4ebf1c67515655
+      size: 5611
+    - path: data/extracted/cub2002011/CUB_200_2011
+      hash: md5
+      md5: 3ae4fe53647665d91ec87f89e8f6d8fd.dir
+      size: 1327295909
+      nfiles: 11810
+    - path: 
+        data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/OID_YOLOv8_Dataset
+      hash: md5
+      md5: 2296daeca49b1eb5e667a22b1318bba5.dir
+      size: 1303744124
+      nfiles: 7934
+    outs:
+    - path: bird_detection/data/selected/birds
+      hash: md5
+      md5: e77a8431a130114aa0d9295545cb168f.dir
+      size: 87658712
+      nfiles: 6083
+    - path: bird_detection/data/selected/squirrels
+      hash: md5
+      md5: ad87bf9c22e5c887c5e3f8db34a28824.dir
+      size: 63781596
+      nfiles: 3620
+  train:
+    cmd: python -m bird_detection.detection.train model=ssd training.epochs=5
+    deps:
+    - path: bird_detection/conf
+      hash: md5
+      md5: 3ee848c674b9e405f0b8eaa3665bc27c.dir
+      size: 1898
+      nfiles: 7
+    - path: bird_detection/data/selected
+      hash: md5
+      md5: 69bd6784411eaaa49d24a01801a314d1.dir
+      size: 151440326
+      nfiles: 9704
+    - path: bird_detection/detection/augmentations.py
+      hash: md5
+      md5: a69833bb14c0b02fb0db1ce2f4005ada
+      size: 5003
+    - path: bird_detection/detection/dataloaders.py
+      hash: md5
+      md5: dfcf84bdc73bf5a1758950d144ef2253
+      size: 17203
+    - path: bird_detection/detection/models.py
+      hash: md5
+      md5: 5ecbe811351ddcd1dfe7b3af9bb53ece
+      size: 3305
+    - path: bird_detection/detection/train.py
+      hash: md5
+      md5: d04f16bf30a034e414764c7c1d0a1d6c
+      size: 7651
+    - path: bird_detection/detection/trainer.py
+      hash: md5
+      md5: 9406637ed86c2176b7f5695679996638
+      size: 8871
+    params:
+      bird_detection/conf/config.yaml:
+        seed: 42
+      bird_detection/conf/data/dataset.yaml:
+        train_split: 0.8
+        val_split: 0.1
+      bird_detection/conf/model/ssd.yaml:
+        name: ssd300_vgg16
+        pretrained: true
+      bird_detection/conf/training/default.yaml:
+        batch_size: 4
+        epochs: 10
+        lr: 0.0001
+        optimizer: adam
+    outs:
+    - path: outputs/tensorboard
+      hash: md5
+      md5: ff4d2117a1d32a4a662a0b20003e101d.dir
+      size: 19131
+      nfiles: 1
+    - path: outputs/trained_model
+      hash: md5
+      md5: 0ca985806c721f12b6f573ef6f41fe60.dir
+      size: 122281129
+      nfiles: 3
+  evaluate:
+    cmd: python -m bird_detection.detection.evaluate --model-dir 
+      outputs/trained_model --data-dir bird_detection/data/selected --output-dir
+      outputs/evaluation
+    deps:
+    - path: bird_detection/data/selected
+      hash: md5
+      md5: 69bd6784411eaaa49d24a01801a314d1.dir
+      size: 151440326
+      nfiles: 9704
+    - path: bird_detection/detection/evaluate.py
+      hash: md5
+      md5: de88929f647e926cfe2f94b410475a15
+      size: 11354
+    - path: outputs/trained_model
+      hash: md5
+      md5: 0ca985806c721f12b6f573ef6f41fe60.dir
+      size: 122281129
+      nfiles: 3
+    outs:
+    - path: outputs/evaluation/confusion_matrix.png
+      hash: md5
+      md5: 30a0fbd684f1cc786738bf01faa9c497
+      size: 27740
+    - path: outputs/evaluation/metrics.json
+      hash: md5
+      md5: 29809253840a392d0a74a9a2757e597d
+      size: 5570
+    - path: outputs/evaluation/pr_curves.json
+      hash: md5
+      md5: f0846cb339f0576b21a73e7398c09f2c
+      size: 198162
