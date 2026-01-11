@@ -72,160 +72,222 @@
 
 Проект использует **DVC (Data Version Control)** для версионирования данных и ML-пайплайна. Данные и модели хранятся в удалённом S3-совместимом хранилище (Yandex Cloud Object Storage).
 
-### Структура данных
+### Необходимые переменные окружения
 
-```
-data/
-├── raw/                    # Архивы .zip с Kaggle (версионируются в DVC, ~2.8 GB)
-├── extracted/              # Распакованные датасеты (генерируются pipeline)
-│   ├── cub2002011/
-│   └── openimagev7-raccoonsquirrelskunkmouserabbit/
-└── selected/               # Подготовленные данные (управляются DVC pipeline)
-    ├── birds/              # 51 вид птиц, ~3000 изображений
-    └── squirrels/          # ~1800 изображений белок
+Для работы с проектом нужны ключи доступа:
+
+#### Yandex Object Storage (для DVC remote):
+```bash
+export AWS_ACCESS_KEY_ID="your_yandex_key_id"
+export AWS_SECRET_ACCESS_KEY="your_yandex_secret_key"
 ```
 
-### Быстрый старт с DVC
+#### Kaggle API (для загрузки сырых данных):
+```bash
+export KAGGLE_USERNAME="your_kaggle_username"
+export KAGGLE_KEY="your_kaggle_api_key"
+```
 
-1. **Клонировать репозиторий:**
-   ```bash
-   git clone <repository-url>
-   cd bird-detection
-   ```
+### 🚀 Быстрый старт
 
-2. **Установить зависимости:**
-   ```bash
-   poetry install
-   ```
+```bash
+# Клонировать репозиторий
+git clone <repository-url>
+cd bird-detection
 
-3. **Загрузить данные из DVC:**
-   ```bash
-   dvc pull
-   ```
-   Это скачает архивы датасетов (`data/raw/`) из удалённого хранилища.
-   
-   *Альтернатива:* Если нет доступа к DVC remote, можно скачать с Kaggle:
-   ```bash
-   export KAGGLE_USERNAME=...
-   export KAGGLE_KEY=...
-   python -m bird_detection.data_scripts.fetch_datasets
-   dvc add data/raw
-   ```
+# Установить зависимости
+poetry install
 
-4. **Воспроизвести весь пайплайн:**
-   ```bash
-   dvc repro
-   ```
-   Выполнит все этапы: подготовку данных → обучение → оценку модели.
+# Настроить переменные окружения (см. выше)
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
 
-### DVC Pipeline
+# Загрузить данные из DVC remote
+poetry run dvc pull
 
-Пайплайн определён в `dvc.yaml` и включает четыре стадии:
+# Воспроизвести pipeline
+poetry run dvc repro
+```
+
+### 📁 Структура данных и моделей
+
+**Физическое расположение:**
+
+```
+bird-detection/
+├── data/
+│   ├── raw/                          # ZIP архивы (~2.8 GB)
+│   │   ├── cub2002011.zip
+│   │   └── openimagev7-....zip
+│   ├── extracted/                    # Распакованные данные (~8.4 GB, генерируется), не версионируются
+│   └── selected/                     # Генерируется pipeline
+├── bird_detection/data/selected/     # Подготовленные данные (~152 MB)
+│   ├── birds/                        # 51 вид, ~3000 изображений
+│   └── squirrels/                    # ~1800 изображений
+└── outputs/                          # Результаты обучения
+    ├── trained_model/                # Обученная модель
+    ├── tensorboard/                  # Логи обучения
+    └── evaluation/                   # Метрики и графики
+```
+
+**Что хранится в удалённом хранилище:**
+- ✅ `data/raw/` — исходные ZIP архивы (2.8 GB)
+- ✅ `bird_detection/data/selected/` — подготовленные данные (152 MB)
+- ✅ `outputs/trained_model/` — обученная модель (117 MB)
+- ✅ `outputs/evaluation/` — метрики оценки
+
+### 🔄 DVC Pipeline
+
+Pipeline состоит из 4 автоматических стадий:
+
+```
+data/raw (DVC) → extract → prepare → train → evaluate
+```
 
 #### 1. **extract** — Распаковка архивов
+Распаковывает ZIP файлы из `data/raw/` в `data/extracted/`
+
 ```bash
-dvc repro extract
+poetry run dvc repro extract
 ```
-
-**Что делает:**
-- Распаковывает .zip архивы из `data/raw/`
-- Создаёт `data/extracted/cub2002011/` и `data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/`
-
-**Зависимости:**
-- `data/raw/` — архивы датасетов (версионированы в DVC)
-
-**Выход:**
-- `data/extracted/` — распакованные датасеты
 
 #### 2. **prepare** — Подготовка данных
+Извлекает 51 вид птиц из CUB-200-2011 и белок из OpenImage V7, приводит к единому формату.
+
 ```bash
-dvc repro prepare
+poetry run dvc repro prepare
 ```
 
-**Что делает:**
-- Извлекает выбранные 51 вид птиц из CUB-200-2011
-- Извлекает изображения белок (класс 84) из OpenImage V7
-- Приводит изображения к максимальному размеру 500px
-- Создаёт labels в пиксельных координатах
+**Результат:** `bird_detection/data/selected/` с готовыми данными для обучения
 
-**Зависимости:**
-- `data/extracted/cub2002011/`
-- `data/extracted/openimagev7-raccoonsquirrelskunkmouserabbit/`
-- Скрипты извлечения данных
+#### 3. **train** — Обучение модели
+Обучает SSD300 с предобученными весами на подготовленных данных.
 
-**Выход:**
-- `bird_detection/data/selected/birds/`
-- `bird_detection/data/selected/squirrels/`
-
-#### 2. **train** — Обучение модели
 ```bash
-dvc repro train
+poetry run dvc repro train
 ```
 
-**Что делает:**
-- Обучает модель детекции (SSD300 или Faster R-CNN)
-- Использует конфигурацию из `bird_detection/conf/`
-- Сохраняет чекпоинты и TensorBoard логи
-- Экспортирует модель в формате HuggingFace
+**Результат:** `outputs/trained_model/` с весами модели
 
-**Зависимости:**
-- Подготовленные данные из стадии `prepare`
-- Код обучения и конфигурационные файлы
-- Параметры из `conf/*.yaml`
-
-**Выход:**
-- `outputs/trained_model/` — финальная модель
-- `outputs/tensorboard/` — логи обучения
+**Параметры** настраиваются в `bird_detection/conf/`. По умолчанию:
+- Модель: SSD300 VGG16 (torchvision)
+- Epochs: 10 (по умолчанию)
+- Batch size: 4
+- Optimizer: Adam, lr=0.0001
 
 #### 4. **evaluate** — Оценка модели
-```bash
-dvc repro evaluate
-```
-
-**Что делает:**
-- Вычисляет mAP@0.5 на тестовой выборке
-- Строит precision-recall кривые
-- Генерирует confusion matrix
-- Сохраняет метрики в JSON
-
-**Зависимости:**
-- Обученная модель из стадии `train`
-- Тестовый датасет
-
-**Выход:**
-- `outputs/evaluation/metrics.json` — метрики качества
-- `outputs/evaluation/pr_curves.json` — PR-кривые для классов
-- `outputs/evaluation/confusion_matrix.png` — матрица ошибок
-
-### Воспроизведение экспериментов
-
-Для запуска конкретного эксперимента измените параметры в `dvc.yaml` или переопределите их через CLI:
+Вычисляет mAP@0.5, строит PR-кривые и confusion matrix на тестовой выборке.
 
 ```bash
-# Эксперимент с Faster R-CNN
-dvc repro train -f --vars-file experiments/fasterrcnn.yaml
-
-# Изменить batch size
-dvc repro train -f -v training.batch_size=16
-
-# Полный прогон с новыми параметрами
-dvc repro -f
+poetry run dvc repro evaluate
 ```
 
-### Местоположение данных и моделей
+**Результат:** `outputs/evaluation/` с метриками и визуализациями
 
-- **Архивы датасетов:** `data/raw/` (версионируются в DVC, ~2.8 GB)
-- **Распакованные данные:** `data/extracted/` (генерируются pipeline extract, ~8.4 GB)
-- **Подготовленные данные:** `bird_detection/data/selected/` (генерируются pipeline, ~152 MB)
-- **Обученные модели:** `outputs/trained_model/` (генерируются при обучении)
-- **Удалённое хранилище:** Yandex Cloud Object Storage, bucket: mlops-homework-17
-- **Конфигурация remote:** `.dvc/config`
+### 🎯 Запуск полного pipeline
 
-**Преимущество:** Архивы в 3 раза меньше распакованных данных, что экономит место в S3 и ускоряет `dvc push/pull`.
+```bash
+# Запустить все стадии последовательно
+poetry run dvc repro
 
+# Или отдельные стадии
+poetry run dvc repro train     # Только обучение
+poetry run dvc repro evaluate  # Только оценка
+```
+
+### 💾 Версионирование и синхронизация
+
+```bash
+# Отправить данные и модели в remote
+poetry run dvc push
+
+# Получить данные и модели из remote
+poetry run dvc pull
+
+# Посмотреть метрики
+poetry run dvc metrics show
+
+# Визуализировать pipeline
+poetry run dvc dag
+```
+
+### 🔬 Работа с экспериментами
+
+```bash
+# Изменить параметры и переобучить
+poetry run dvc repro train -f
+
+# Зафиксировать эксперимент
+git add dvc.lock
+git commit -m "Experiment 1: baseline SSD300"
+git tag exp-1
+
+# Сравнить метрики между экспериментами
+poetry run dvc metrics diff exp-1 exp-2
+
+# Вернуться к предыдущему эксперименту
+git checkout exp-1
+poetry run dvc repro
+```
+
+### 📊 Метрики качества
+
+После обучения метрики доступны в:
+- `outputs/evaluation/metrics.json` — числовые метрики (mAP, AP по классам)
+- `outputs/evaluation/pr_curves.json` — данные PR-кривых
+- `outputs/evaluation/confusion_matrix.png` — визуализация ошибок
+- `outputs/tensorboard/` — логи обучения (TensorBoard) (не версионируются)
+
+```bash
+# Просмотр TensorBoard
+tensorboard --logdir outputs/tensorboard
+```
+
+### 🌐 Удалённое хранилище
+
+- **Провайдер:** Yandex Cloud Object Storage
+- **Bucket:** mlops-homework-17
+- **Регион:** ru-central1
+- **Конфигурация:** `.dvc/config`
+
+**Настройка доступа:**
+1. Создайте сервисный аккаунт в Yandex Cloud
+2. Получите ключи доступа (Access Key ID и Secret Key)
+3. Экспортируйте переменные окружения (см. выше)
 
 
 # Использование кода
+
+## Быстрый старт (рекомендуется)
+
+Самый простой способ начать работу с проектом:
+
+```bash
+# 1. Клонировать репозиторий
+git clone <repository-url>
+cd bird-detection
+
+# 2. Установить зависимости
+poetry install
+
+# 3. Настроить доступ к Yandex Object Storage
+export AWS_ACCESS_KEY_ID="your_key_id"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+
+# 4. Загрузить данные и воспроизвести pipeline
+poetry run dvc pull    # Скачает данные из remote (~3 GB)
+poetry run dvc repro   # Запустит весь pipeline
+```
+
+После выполнения у вас будет:
+- Подготовленные данные в `bird_detection/data/selected/`
+- Обученная модель в `outputs/trained_model/`
+- Метрики оценки в `outputs/evaluation/`
+
+---
+
+
+## Описание других модулей
 
 Для удобства, отобранные и подготовленные куски выбранных датасетов сохранены в bird_detection/data/selected.
 
